@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fairy Platformer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+        }
+        canvas {
+            border: 2px solid #4a5568;
+        }
+        #game-container {
+            position: relative;
+        }
+        #instructions {
+            color: white;
+            text-align: center;
+            font-family: Arial, sans-serif;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="game"></div>
+        <div id="instructions">
+            <p>Arrow keys: Move left/right | Spacebar: Jump | F: Shoot fireball</p>
+        </div>
+    </div>
+
+    <script>
+        // Game configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 300 },
+                    debug: false
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        // Game variables
+        let player;
+        let platforms;
+        let rings;
+        let enemies;
+        let fireballs;
+        let cursors;
+        let jumpButton;
+        let fireButton;
+        let score = 0;
+        let scoreText;
+        let gameOverText;
+        let finishLine;
+        let enemySpawnTimer;
+        let backgroundSprites = [];
+        let emitter;
+        let lastFired = 0;
+        let fireballCooldown = 500; // cooldown in ms
+        let gameOver = false;
+
+        // Create game instance
+        const game = new Phaser.Game(config);
+
+        function preload() {
+            // Load assets
+            this.load.image('sky', 'https://labs.phaser.io/assets/skies/space3.png');
+            this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
+            this.load.image('ring', 'https://labs.phaser.io/assets/sprites/orb-blue.png');
+            this.load.image('fireball', 'https://labs.phaser.io/assets/sprites/bullets/bullet7.png');
+            this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/wasp.png');
+            this.load.image('finish', 'https://labs.phaser.io/assets/sprites/block.png');
+            this.load.spritesheet('fairy', 'https://labs.phaser.io/assets/sprites/bmo.png', { frameWidth: 32, frameHeight: 48 });
+            this.load.image('sparkle', 'https://labs.phaser.io/assets/particles/blue.png');
+        }
+
+        function create() {
+            // Add background
+            for (let i = 0; i < 4; i++) {
+                let bg = this.add.image(i * 800, 300, 'sky');
+                bg.setScrollFactor(0.6);
+                backgroundSprites.push(bg);
+            }
+
+            // Set world bounds
+            this.physics.world.setBounds(0, 0, 3200, 600);
+
+            // Create particle emitter
+            let particles = this.add.particles('sparkle');
+            emitter = particles.createEmitter({
+                speed: 100,
+                scale: { start: 0.2, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 500
+            });
+            emitter.stop();
+
+            // Create platforms group
+            platforms = this.physics.add.staticGroup();
+
+            // Create ground platforms
+            for (let i = 0; i < 8; i++) {
+                platforms.create(i * 400, 568, 'ground').setScale(2).refreshBody();
+            }
+
+            // Create floating platforms
+            createPlatforms(this);
+
+            // Create finish line
+            finishLine = this.physics.add.staticGroup();
+            let finishSprite = finishLine.create(3100, 400, 'finish');
+            finishSprite.setScale(2);
+            finishSprite.refreshBody();
+            finishSprite.setTint(0xffff00);
+            
+            // Add some visuals to the finish line
+            this.add.text(3050, 350, 'FINISH', { 
+                fontSize: '32px', 
+                fill: '#ffff00',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setScrollFactor(1);
+
+            // Create rings
+            rings = this.physics.add.group();
+            createRings(this);
+
+            // Create player
+            player = this.physics.add.sprite(100, 450, 'fairy');
+            player.setBounce(0.2);
+            player.setCollideWorldBounds(true);
+            
+            // Set player size to better fit the collision box
+            player.setSize(24, 40);
+            
+            // Connect particle emitter to player
+            emitter.startFollow(player);
+
+            // Set camera to follow player
+            this.cameras.main.setBounds(0, 0, 3200, 600);
+            this.cameras.main.startFollow(player);
+
+            // Player animations
+            this.anims.create({
+                key: 'left',
+                frames: this.anims.generateFrameNumbers('fairy', { start: 0, end: 3 }),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            this.anims.create({
+                key: 'turn',
+                frames: [ { key: 'fairy', frame: 4 } ],
+                frameRate: 20
+            });
+
+            this.anims.create({
+                key: 'right',
+                frames: this.anims.generateFrameNumbers('fairy', { start: 5, end: 8 }),
+                frameRate: 10,
+                repeat: -1
+            });
+
+            // Create fireballs group
+            fireballs = this.physics.add.group({
+                defaultKey: 'fireball',
+                maxSize: 10
+            });
+
+            // Create enemies group
+            enemies = this.physics.add.group();
+
+            // Start enemy spawn timer
+            enemySpawnTimer = this.time.addEvent({
+                delay: 3000,
+                callback: spawnEnemy,
+                callbackScope: this,
+                loop: true
+            });
+
+            // Score text
+            scoreText = this.add.text(16, 16, 'Score: 0', { 
+                fontSize: '32px', 
+                fill: '#ffff00',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setScrollFactor(0);
+
+            // Game over text
+            gameOverText = this.add.text(400, 300, '', { 
+                fontSize: '64px', 
+                fill: '#ff0000',
+                stroke: '#000000',
+                strokeThickness: 6,
+                align: 'center'
+            }).setOrigin(0.5).setScrollFactor(0);
+            gameOverText.setVisible(false);
+
+            // Set up collisions
+            this.physics.add.collider(player, platforms);
+            this.physics.add.collider(rings, platforms);
+            this.physics.add.collider(enemies, platforms);
+            this.physics.add.collider(fireballs, platforms, fireballHitPlatform, null, this);
+            this.physics.add.collider(fireballs, enemies, fireballHitEnemy, null, this);
+            this.physics.add.collider(player, enemies, hitEnemy, null, this);
+            this.physics.add.overlap(player, rings, collectRing, null, this);
+            this.physics.add.overlap(player, finishLine, reachFinishLine, null, this);
+
+            // Set up controls
+            cursors = this.input.keyboard.createCursorKeys();
+            jumpButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+            fireButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+        }
+
+        function update(time) {
+            if (gameOver) {
+                return;
+            }
+
+            // Player movement
+            if (cursors.left.isDown) {
+                player.setVelocityX(-160);
+                player.anims.play('left', true);
+            } else if (cursors.right.isDown) {
+                player.setVelocityX(160);
+                player.anims.play('right', true);
+            } else {
+                player.setVelocityX(0);
+                player.anims.play('turn');
+            }
+
+            // Jumping
+            if (jumpButton.isDown && player.body.touching.down) {
+                player.setVelocityY(-400);
+                emitter.start();
+                this.time.delayedCall(300, () => {
+                    emitter.stop();
+                });
+            }
+
+            // Fire fireball
+            if (fireButton.isDown && time > lastFired) {
+                fireFireball(this, time);
+                lastFired = time + fireballCooldown;
+            }
+
+            // Move enemies toward player
+            enemies.getChildren().forEach(enemy => {
+                // Check if enemy is on screen
+                if (enemy.active && enemy.x > player.x - 400 && enemy.x < player.x + 400) {
+                    // Move toward player
+                    if (enemy.x < player.x) {
+                        enemy.setVelocityX(50);
+                        enemy.flipX = true;
+                    } else {
+                        enemy.setVelocityX(-50);
+                        enemy.flipX = false;
+                    }
+                }
+            });
+        }
+
+        // Helper functions
+
+        function createPlatforms(scene) {
+            // Platform positions [x, y]
+            const platformPositions = [
+                [600, 400],
+                [800, 300],
+                [1000, 450],
+                [1200, 350],
+                [1400, 250],
+                [1600, 400],
+                [1800, 300],
+                [2000, 450],
+                [2200, 350],
+                [2400, 250],
+                [2600, 400],
+                [2800, 300],
+                [3000, 450]
+            ];
+
+            platformPositions.forEach(pos => {
+                let platform = platforms.create(pos[0], pos[1], 'ground');
+                platform.setScale(0.5).refreshBody();
+            });
+        }
+
+        function createRings(scene) {
+            // Ring positions [x, y]
+            const ringPositions = [
+                [400, 300],
+                [600, 350],
+                [800, 250],
+                [1000, 400],
+                [1200, 300],
+                [1400, 200],
+                [1600, 350],
+                [1800, 250],
+                [2000, 400],
+                [2200, 300],
+                [2400, 200],
+                [2600, 350],
+                [2800, 250],
+                [3000, 400]
+            ];
+
+            ringPositions.forEach(pos => {
+                let ring = rings.create(pos[0], pos[1], 'ring');
+                ring.setBounceY(0.2);
+                ring.setScale(0.5);
+            });
+        }
+
+        function spawnEnemy() {
+            if (gameOver) return;
+            
+            // Calculate spawn position - slightly ahead of player
+            const spawnX = Phaser.Math.Between(player.x + 400, player.x + 800);
+            
+            // Don't spawn if too close to finish line
+            if (spawnX > 2900) return;
+            
+            // Don't spawn if out of world bounds
+            if (spawnX > 3200) return;
+            
+            const spawnY = 300;
+            
+            const enemy = enemies.create(spawnX, spawnY, 'enemy');
+            enemy.setBounce(0.2);
+            enemy.setCollideWorldBounds(true);
+            enemy.setScale(0.8);
+            
+            // Random initial direction
+            enemy.setVelocityX(Phaser.Math.Between(-50, 50));
+        }
+
+        function fireFireball(scene, time) {
+            let fireball = fireballs.get();
+            
+            if (!fireball) return;
+            
+            fireball.body.allowGravity = false;
+            
+            fireball.setActive(true);
+            fireball.setVisible(true);
+            
+            // Position and fire in direction player is facing
+            const direction = player.anims.currentAnim.key === 'left' ? -1 : 1;
+            fireball.setPosition(player.x + (direction * 20), player.y);
+            fireball.setVelocityX(direction * 400);
+            
+            // Rotate the fireball for effect
+            scene.tweens.add({
+                targets: fireball,
+                angle: direction * 360,
+                duration: 1000,
+                repeat: -1
+            });
+            
+            // Auto-destroy after 2 seconds
+            scene.time.delayedCall(2000, () => {
+                if (fireball.active) {
+                    fireball.setActive(false);
+                    fireball.setVisible(false);
+                    fireball.body.stop();
+                }
+            });
+        }
+
+        function collectRing(player, ring) {
+            ring.disableBody(true, true);
+            
+            // Add sparkle effect at ring position
+            this.add.particles('sparkle').createEmitter({
+                x: ring.x,
+                y: ring.y,
+                speed: { min: -100, max: 100 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.4, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 500,
+                gravityY: 0,
+                quantity: 20
+            });
+            
+            // Update score
+            score += 10;
+            scoreText.setText('Score: ' + score);
+        }
+
+        function fireballHitEnemy(fireball, enemy) {
+            fireball.setActive(false);
+            fireball.setVisible(false);
+            
+            enemy.disableBody(true, true);
+            
+            // Add explosion effect
+            this.add.particles('sparkle').createEmitter({
+                x: enemy.x,
+                y: enemy.y,
+                speed: { min: -100, max: 100 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.6, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 500,
+                gravityY: 0,
+                quantity: 30
+            });
+            
+            // Update score
+            score += 20;
+            scoreText.setText('Score: ' + score);
+        }
+
+        function fireballHitPlatform(fireball) {
+            fireball.setActive(false);
+            fireball.setVisible(false);
+        }
+
+        function hitEnemy(player, enemy) {
+            this.physics.pause();
+            
+            player.setTint(0xff0000);
+            player.anims.play('turn');
+            
+            gameOver = true;
+            gameOverText.setText('GAME OVER\nClick to restart');
+            gameOverText.setVisible(true);
+            
+            // Add click handler to restart
+            this.input.once('pointerdown', () => {
+                resetGame(this);
+            });
+        }
+
+        function reachFinishLine(player, finish) {
+            this.physics.pause();
+            
+            player.setTint(0x00ff00);
+            
+            gameOver = true;
+            gameOverText.setText('YOU WIN!\nFinal Score: ' + score + '\nClick to restart');
+            gameOverText.setVisible(true);
+            
+            // Victory particles
+            this.add.particles('sparkle').createEmitter({
+                x: player.x,
+                y: player.y,
+                speed: { min: -100, max: 100 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.6, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 2000,
+                gravityY: 50,
+                quantity: 5,
+                frequency: 100,
+                emitZone: { type: 'edge', source: new Phaser.Geom.Circle(0, 0, 50), quantity: 20 }
+            });
+            
+            // Add click handler to restart
+            this.input.once('pointerdown', () => {
+                resetGame(this);
+            });
+        }
+
+        function resetGame(scene) {
+            // Reset game variables
+            score = 0;
+            gameOver = false;
+            
+            // Restart the scene
+            scene.scene.restart();
+        }
+    </script>
+</body>
+</html>
