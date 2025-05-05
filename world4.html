@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fairy Kingdom Builder</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #222;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 2px solid #4a5568;
+        }
+        #game-container {
+            position: relative;
+        }
+        #instructions {
+            color: white;
+            text-align: center;
+            margin-top: 10px;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .upgrade-btn {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 2px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .upgrade-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #daily-challenge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="game"></div>
+        <div id="instructions">
+            <p>Arrow keys: Move left/right | Spacebar: Jump | F: Shoot fireball | E: Open shop | M: Toggle music</p>
+        </div>
+        <div id="ui-overlay">
+            <h3>Fairy Kingdom Shop</h3>
+            <div id="coins-display">Fairy Coins: 0</div>
+            <div id="upgrade-list">
+                <div>
+                    <button class="upgrade-btn" id="upgrade-speed">Speed Boost (50 coins)</button>
+                    <span id="speed-level">Lvl 0</span>
+                </div>
+                <div>
+                    <button class="upgrade-btn" id="upgrade-jump">Jump Power (75 coins)</button>
+                    <span id="jump-level">Lvl 0</span>
+                </div>
+                <div>
+                    <button class="upgrade-btn" id="upgrade-fireball">Fireball Power (100 coins)</button>
+                    <span id="fireball-level">Lvl 0</span>
+                </div>
+                <div>
+                    <button class="upgrade-btn" id="upgrade-cooldown">Cooldown Reduction (125 coins)</button>
+                    <span id="cooldown-level">Lvl 0</span>
+                </div>
+                <div>
+                    <button class="upgrade-btn" id="buy-life">Extra Life (200 coins)</button>
+                    <span id="lives-count">Lives: 3</span>
+                </div>
+                <div>
+                    <button class="upgrade-btn" id="unlock-area">Unlock New Area (500 coins)</button>
+                    <span id="area-level">Area 1</span>
+                </div>
+            </div>
+            <button class="upgrade-btn" id="close-shop">Close Shop</button>
+        </div>
+        <div id="daily-challenge"></div>
+    </div>
+
+    <script>
+        // Storage management for persistent progress
+        const SAVE_KEY = 'fairy_kingdom_save';
+        
+        // Initial player stats (can be upgraded)
+        let playerStats = {
+            speed: 160,
+            jumpPower: 400,
+            fireballPower: 1,
+            fireballCooldown: 500,
+            coins: 0,
+            lives: 3,
+            maxLives: 5,
+            unlockedAreas: 1,
+            speedLevel: 0,
+            jumpLevel: 0,
+            fireballLevel: 0,
+            cooldownLevel: 0,
+            completedLevels: {}
+        };
+        
+        // Daily challenges
+        const challenges = [
+            { text: "Collect 15 rings", target: 15, type: "rings" },
+            { text: "Defeat 10 enemies", target: 10, type: "enemies" },
+            { text: "Reach the finish with at least 200 coins", target: 200, type: "coins" },
+            { text: "Complete the level without using fireballs", target: 0, type: "nofireball" },
+            { text: "Complete the level in under 60 seconds", target: 60, type: "time" }
+        ];
+        
+        // Game configuration
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 300 },
+                    debug: false
+                }
+            },
+            scene: [
+                BootScene,
+                MenuScene,
+                GameScene,
+                UIScene,
+                LevelSelectScene,
+                AchievementScene
+            ]
+        };
+        
+        // Create game instance
+        const game = new Phaser.Game(config);
+        
+        // Boot Scene - loads assets
+        function BootScene() {
+            Phaser.Scene.call(this, { key: 'BootScene' });
+        }
+        
+        BootScene.prototype = Object.create(Phaser.Scene.prototype);
+        BootScene.prototype.constructor = BootScene;
+        
+        BootScene.prototype.preload = function() {
+            // Show loading progress
+            let progressBar = this.add.graphics();
+            let progressBox = this.add.graphics();
+            progressBox.fillStyle(0x222222, 0.8);
+            progressBox.fillRect(240, 270, 320, 50);
+            
+            let width = this.cameras.main.width;
+            let height = this.cameras.main.height;
+            let loadingText = this.make.text({
+                x: width / 2,
+                y: height / 2 - 50,
+                text: 'Loading...',
+                style: {
+                    font: '20px monospace',
+                    fill: '#ffffff'
+                }
+            });
+            loadingText.setOrigin(0.5, 0.5);
+            
+            // Loading event listeners
+            this.load.on('progress', function (value) {
+                progressBar.clear();
+                progressBar.fillStyle(0xffffff, 1);
+                progressBar.fillRect(250, 280, 300 * value, 30);
+            });
+            
+            this.load.on('complete', function () {
+                progressBar.destroy();
+                progressBox.destroy();
+                loadingText.destroy();
+            });
+            
+            // Load assets
+            this.load.image('sky', 'https://labs.phaser.io/assets/skies/space3.png');
+            this.load.image('mountains', 'https://labs.phaser.io/assets/skies/sky1.png');
+            this.load.image('forest', 'https://labs.phaser.io/assets/skies/sky4.png');
+            this.load.image('ground', 'https://labs.phaser.io/assets/sprites/platform.png');
+            this.load.image('ring', 'https://labs.phaser.io/assets/sprites/orb-blue.png');
+            this.load.image('coin', 'https://labs.phaser.io/assets/sprites/coin.png');
+            this.load.image('gem', 'https://labs.phaser.io/assets/sprites/diamond.png');
+            this.load.image('chest', 'https://labs.phaser.io/assets/sprites/treasure_trap.png');
+            this.load.image('fireball', 'https://labs.phaser.io/assets/sprites/bullets/bullet7.png');
+            this.load.image('enemy', 'https://labs.phaser.io/assets/sprites/wasp.png');
+            this.load.image('boss', 'https://labs.phaser.io/assets/sprites/spinObj_01.png');
+            this.load.image('finish', 'https://labs.phaser.io/assets/sprites/block.png');
+            this.load.image('heart', 'https://labs.phaser.io/assets/sprites/heart.png');
+            this.load.image('sparkle', 'https://labs.phaser.io/assets/particles/blue.png');
+            this.load.image('redsparkle', 'https://labs.phaser.io/assets/particles/red.png');
+            this.load.image('greenparkle', 'https://labs.phaser.io/assets/particles/green.png');
+            this.load.image('portal', 'https://labs.phaser.io/assets/sprites/orb-red.png');
+            this.load.image('powerup', 'https://labs.phaser.io/assets/sprites/mushroom.png');
+            this.load.image('button', 'https://labs.phaser.io/assets/sprites/button-green.png');
+            this.load.image('signpost', 'https://labs.phaser.io/assets/sprites/signpost.png');
+            this.load.image('cloud', 'https://labs.phaser.io/assets/sprites/cloud.png');
+            
+            this.load.spritesheet('fairy', 'https://labs.phaser.io/assets/sprites/bmo.png', { frameWidth: 32, frameHeight: 48 });
+            this.load.spritesheet('explosion', 'https://labs.phaser.io/assets/sprites/explosion.png', { frameWidth: 64, frameHeight: 64, endFrame: 23 });
+            
+            // Load audio
+            this.load.audio('jump', 'https://labs.phaser.io/assets/audio/SoundEffects/jump.wav');
+            this.load.audio('collect', 'https://labs.phaser.io/assets/audio/SoundEffects/coin.wav');
+            this.load.audio('explosion', 'https://labs.phaser.io/assets/audio/SoundEffects/explosion.wav');
+            this.load.audio('fire', 'https://labs.phaser.io/assets/audio/SoundEffects/laser.wav');
+            this.load.audio('music', 'https://labs.phaser.io/assets/audio/music/fairy-waltz.mp3');
+            this.load.audio('victory', 'https://labs.phaser.io/assets/audio/music/fairy-glade.mp3');
+            this.load.audio('gameover', 'https://labs.phaser.io/assets/audio/SoundEffects/negative.wav');
+        };
+        
+        BootScene.prototype.create = function() {
+            // Load saved data if exists
+            loadSavedGame();
+            
+            // Set daily challenge
+            setDailyChallenge();
+            
+            // Go to menu
+            this.scene.start('MenuScene');
+        };
+        
+        // Menu Scene
+        function MenuScene() {
+            Phaser.Scene.call(this, { key: 'MenuScene' });
+        }
+        
+        MenuScene.prototype = Object.create(Phaser.Scene.prototype);
+        MenuScene.prototype.constructor = MenuScene;
+        
+        MenuScene.prototype.create = function() {
+            // Background
+            this.add.image(400, 300, 'sky');
+            
+            // Fairy Kingdom title
+            this.add.text(400, 100, 'Fairy Kingdom Builder', {
+                fontSize: '48px',
+                fill: '#ffffff',
+                fontStyle: 'bold',
+                stroke: '#000000',
+                strokeThickness: 6
+            }).setOrigin(0.5);
+            
+            // Menu buttons
+            this.createButton(400, 250, 'Play Game', () => {
+                this.scene.start('LevelSelectScene');
+            });
+            
+            this.createButton(400, 320, 'Achievements', () => {
+                this.scene.start('AchievementScene');
+            });
+            
+            // Display total coins
+            this.add.text(400, 400, `Total Fairy Coins: ${playerStats.coins}`, {
+                fontSize: '24px',
+                fill: '#ffff00',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setOrigin(0.5);
+            
+            // Display current area
+            this.add.text(400, 440, `Unlocked Areas: ${playerStats.unlockedAreas}`, {
+                fontSize: '24px',
+                fill: '#00ffff',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setOrigin(0.5);
+            
+            // Fairy character decoration
+            let fairy = this.add.sprite(150, 300, 'fairy');
+            fairy.setScale(2);
+            this.anims.create({
+                key: 'hover',
+                frames: this.anims.generateFrameNumbers('fairy', { start: 0, end: 8 }),
+                frameRate: 10,
+                repeat: -1
+            });
+            fairy.play('hover');
+            
+            // Particle effects
+            let particles = this.add.particles('sparkle');
+            let emitter = particles.createEmitter({
+                speed: 100,
+                scale: { start: 0.2, end: 0 },
+                blendMode: 'ADD',
+                lifespan: 1000,
+                frequency: 100
+            });
+            emitter.startFollow(fairy);
+            
+            // Add floating clouds
+            this.createFloatingClouds();
+        };
+        
+        MenuScene.prototype.createButton = function(x, y, text, callback) {
+            let button = this.add.image(x, y, 'button').setInteractive();
+            button.setScale(2);
+            
+            let buttonText = this.add.text(x, y, text, {
+                fontSize: '24px',
+                fill: '#000000'
+            }).setOrigin(0.5);
+            
+            button.on('pointerdown', callback);
+            
+            button.on('pointerover', function() {
+                button.setTint(0xcccccc);
+            });
+            
+            button.on('pointerout', function() {
+                button.clearTint();
+            });
+            
+            return button;
+        };
+        
+        MenuScene.prototype.createFloatingClouds = function() {
+            for (let i = 0; i < 5; i++) {
+                let x = Phaser.Math.Between(0, 800);
+                let y = Phaser.Math.Between(50, 550);
+                let cloud = this.add.image(x, y, 'cloud');
+                cloud.setAlpha(0.7);
+                cloud.setScale(Phaser.Math.FloatBetween(0.5, 1.5));
+                
+                // Random slow movement
+                this.tweens.add({
+                    targets: cloud,
+                    x: cloud.x + Phaser.Math.Between(-100, 100),
+                    y: cloud.y + Phaser.Math.Between(-20, 20),
+                    duration: Phaser.Math.Between(5000, 10000),
+                    ease: 'Sine.easeInOut',
+                    yoyo: true,
+                    repeat: -1
+                });
+            }
+        };
+        
+        // Level Select Scene
+        function LevelSelectScene() {
+            Phaser.Scene.call(this, { key: 'LevelSelectScene' });
+        }
+        
+        LevelSelectScene.prototype = Object.create(Phaser.Scene.prototype);
+        LevelSelectScene.prototype.constructor = LevelSelectScene;
+        
+        LevelSelectScene.prototype.create = function() {
+            // Background
+            this.add.image(400, 300, 'forest');
+            
+            // Title
+            this.add.text(400, 60, 'Select Area', {
+                fontSize: '40px',
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setOrigin(0.5);
+            
+            // Create area buttons based on unlocked areas
+            const areaTypes = [
+                { name: 'Fairy Forest', bg: 'forest' },
+                { name: 'Mystic Mountains', bg: 'mountains' },
+                { name: 'Enchanted Sky', bg: 'sky' }
+            ];
+            
+            for (let i = 0; i < 3; i++) {
+                let x = 200 + (i * 200);
+                let y = 300;
+                let areaNum = i + 1;
+                
+                let levelButton = this.add.container(x, y);
+                
+                // Frame
+                let frame = this.add.rectangle(0, 0, 150, 200, 0x000000, 0.7);
+                frame.setStrokeStyle(2, 0xffffff);
+                
+                // Area image
+                let areaImage = this.add.image(0, -40, areaTypes[i].bg);
+                areaImage.setScale(0.2);
+                
+                // Title
+                let titleText = this.add.text(0, 20, areaTypes[i].name, {
+                    fontSize: '16px',
+                    fill: '#ffffff',
+                    align: 'center'
+                }).setOrigin(0.5);
+                
+                // Button
+                let buttonBg = this.add.rectangle(0, 60, 120, 30, 0x4CAF50);
+                
+                // Lock status
+                let statusText;
+                if (areaNum <= playerStats.unlockedAreas) {
+                    statusText = this.add.text(0, 60, 'Play', {
+                        fontSize: '16px',
+                        fill: '#ffffff'
+                    }).setOrigin(0.5);
+                    
+                    // Make clickable
+                    buttonBg.setInteractive();
+                    buttonBg.on('pointerdown', () => {
+                        this.scene.start('GameScene', { area: areaNum });
+                    });
+                    
+                    // Stars for completed levels
+                    let completedInfo = playerStats.completedLevels[`area${areaNum}`];
+                    if (completedInfo) {
+                        let starsText = this.add.text(0, 90, `★ ${completedInfo.stars || 0}/3`, {
+                            fontSize: '16px',
+                            fill: '#ffff00'
+                        }).setOrigin(0.5);
+                        levelButton.add(starsText);
+                    }
+                    
+                } else {
+                    statusText = this.add.text(0, 60, 'Locked', {
+                        fontSize: '16px',
+                        fill: '#ffffff'
+                    }).setOrigin(0.5);
+                    buttonBg.setFillStyle(0x888888);
+                    
+                    // Show cost
+                    let costText = this.add.text(0, 90, '500 coins', {
+                        fontSize: '14px',
+                        fill: '#ffff00'
+                    }).setOrigin(0.5);
+                    levelButton.add(costText);
+                }
+                
+                // Add hover effect
+                buttonBg.on('pointerover', function() {
+                    buttonBg.setFillStyle(0x77DD77);
+                });
+                buttonBg.on('pointerout', function() {
+                    buttonBg.setFillStyle(0x4CAF50);
+                });
+                
+                // Add elements to container
+                levelButton.add([frame, areaImage, titleText, buttonBg, statusText]);
+            }
+            
+            // Back button
+            this.createButton(400, 500, 'Back to Menu', () => {
+                this.scene.start('MenuScene');
+            });
+        };
+        
+        LevelSelectScene.prototype.createButton = function(x, y, text, callback) {
+            let button = this.add.image(x, y, 'button').setInteractive();
+            button.setScale(1.5);
+            
+            let buttonText = this.add.text(x, y, text, {
+                fontSize: '20px',
+                fill: '#000000'
+            }).setOrigin(0.5);
+            
+            button.on('pointerdown', callback);
+            
+            button.on('pointerover', function() {
+                button.setTint(0xcccccc);
+            });
+            
+            button.on('pointerout', function() {
+                button.clearTint();
+            });
+            
+            return button;
+        };
+        
+        // Achievement Scene
+        function AchievementScene() {
+            Phaser.Scene.call(this, { key: 'AchievementScene' });
+        }
+        
+        AchievementScene.prototype = Object.create(Phaser.Scene.prototype);
+        AchievementScene.prototype.constructor = AchievementScene;
+        
+        AchievementScene.prototype.create = function() {
+            // Background
+            this.add.image(400, 300, 'mountains');
+            
+            // Title
+            this.add.text(400, 60, 'Achievements & Stats', {
+                fontSize: '40px',
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 4
+            }).setOrigin(0.5);
+            
+            // Stats display
+            const stats = [
+                `Speed Level: ${playerStats.speedLevel}`,
+                `Jump Power Level: ${playerStats.jumpLevel}`,
+                `Fireball Power Level: ${playerStats.fireballLevel}`,
+                `Cooldown Reduction: ${playerStats.cooldownLevel}`,
+                `Unlocked Areas: ${playerStats.unlockedAreas}/3`,
+                `Lives: ${playerStats.lives}/${playerStats.maxLives}`
+            ];
+            
+            // Create stats panel
+            let statsPanel = this.add.container(250, 250);
+            let statsBg = this.add.rectangle(0, 0, 350, 300, 0x000000, 0.7);
+            statsBg.setStrokeStyle(2, 0xffffff);
+            statsPanel.add(statsBg);
+            
+            let statsTitle = this.add.text(0, -120, 'Player Stats', {
+                fontSize: '24px',
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 2
+            }).setOrigin(0.5);
+            statsPanel.add(statsTitle);
+            
+            // Add stats text
+            for (let i = 0; i < stats.length; i++) {
+                let statText = this.add.text(-150, -80 + (i * 30), stats[i], {
+                    fontSize: '18px',
+                    fill: '#ffffff'
+                });
+                statsPanel.add(statText);
+            }
+            
+            // Achievement panel
+            let achievePanel = this.add.container(600, 250);
+            let achieveBg = this.add.rectangle(0, 0, 350, 300, 0x000000, 0.7);
+            achieveBg.setStrokeStyle(2, 0xffffff);
+            achievePanel.add(achieveBg);
+            
+            let achieveTitle = this.add.text(0, -120, 'Area Completion', {
+                fontSize: '24px',
+                fill: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 2
+            }).setOrigin(0.5);
+            achievePanel.add(achieveTitle);
+            
+            // Area completion info
+            const areaNames = ['Fairy Forest', 'Mystic Mountains', 'Enchanted Sky'];
+            for (let i = 0; i < 3; i++) {
+                let areaNum = i + 1;
+                let completion = playerStats.completedLevels[`area${areaNum}`];
+                let status = completion ? `★ ${completion.stars}/3` : 'Not Completed';
+                let color = completion ? '#ffff00' : '#cccccc';
+                
+                let areaText = this.add.text(-150, -80 + (i * 50), areaNames[i], {
+                    fontSize: '18px',
+                    fill: '#ffffff'
+                });
+                
+                let statusText = this.add.text(-150, -60 + (i * 50), status, {
+                    fontSize: '16px',
+                    fill: color
+                });
+                
+                achievePanel.add([areaText, statusText]);
+            }
+            
+            // Back button
+            this.createButton(400, 500, 'Back to Menu', () => {
+                this.scene.start('MenuScene');
+            });
+        };
+        
+        AchievementScene.prototype.createButton = MenuScene.prototype.createButton;
+        
+        // Main Game Scene
+        function GameScene() {
+            Phaser.Scene.call(this, { key: 'GameScene' });
+        }
+        
+        GameScene.prototype = Object.create(Phaser.Scene.prototype);
+        GameScene.prototype.constructor = GameScene;
+        
+        GameScene.prototype.init = function(data) {
+            // Set current level/area
+            this.currentArea = data.area || 1;
+            
+            // Reset level data
+            this.score = 0;
+            this.coins = 0;
+            this.rings = 0;
+            this.enemiesDefeated = 0;
+            this.fireballs = 0;
+            this.gameOver = false;
+            this.levelComplete = false;
+            this.currentLives = playerStats.lives;
+            this.gameTime = 0;
+            this.timeStarted = false;
+            
+            // Challenge tracking
+            this.dailyChallenge = getCurrentChallenge();
+            this.challengeProgress = 0;
+            this.challengeComplete = false;
+        };
+        
+        GameScene.prototype.preload = function() {
+            // Already loaded in boot scene
+        };
+        
+        GameScene.prototype.create = function() {
+            // Setup current area environment
+            this.setupEnvironment();
+            
+            // Add UI scene on top
+            this.scene.launch('UIScene', {
+                gameScene: this,
+                area: this.currentArea,
+                lives: this.currentLives,
+                challenge: this.dailyChallenge
+            });
+            
+            // Start game timer
+            this.timeStarted = true;
+            
+            // Set up shop UI event listeners
+            this.setupShopListeners();
+            
+            // Sound effects
+            this.jumpSound = this.sound.add('jump', { volume: 0.5 });
+            this.collectSound = this.sound.add('collect', { volume: 0.5 });
+            this.explosionSound = this.sound.add('explosion', { volume: 0.5 });
+            this.fireSound = this.sound.add('fire', { volume: 0.5 });
+            this.music = this.sound.add('music', { volume: 0.3, loop: true });
+            this.victorySound = this.sound.add('victory', { volume: 0.5 });
+            this.gameoverSound = this.sound.add('gameover', { volume: 0.5 });
+            
+            // Start music
+            this.music.play();
+            
+            // Input handling
+            this.cursors = this.input.keyboard.createCursorKeys();
+            this.jumpButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+            this.fireButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+            this.shopButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+            this.muteButton = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
+            
+            // Toggle shop
+            this.shopButton.on('down', () => {
+                this.toggleShop();
+            });
+            
+            // Toggle music
+            this.muteButton.on('down', () => {
+                this.sound.mute = !this.sound.mute;
+            });
+            
+            // Game variables
+            this.lastFired = 0;
+            this.fireballCooldown = playerStats.fireballCooldown;
+            this.shopOpen = false;
+        };
+        
+        GameScene.prototype.update = function(time, delta) {
+            if (this.gameOver || this.levelComplete) return;
+            
+            // Update game time if started
+            if (this.timeStarted) {
+                this.gameTime += delta;
+                // Update UI every second
+                if (Math.floor(this.gameTime / 1000) !== Math.floor((this.gameTime - delta) / 1000)) {
+                    this.events.emit('timeUpdate', Math.floor(this.gameTime / 1000));
+                }
+            }
+            
+            // Don't update player when shop is open
+            if (this.shopOpen) return;
+            
+            // Player movement
+            if (this.cursors.left.isDown) {
+                this.player.setVelocityX(-playerStats.speed);
+                this.player.anims.play('left', true);
+                this.player.direction = -1;
+            } else if (this.cursors.right.isDown) {
+                this.player.setVelocityX(playerStats.speed);
+                this.player.anims.play('right', true);
+                this.player.direction = 1;
+            } else {
+                this.player.setVelocityX(0);
+                this.player.anims.play('turn');
+            }
+            
+            // Jumping
+            if (this.jumpButton.isDown && this.player.body.touching.down) {
+                this.player.setVelocityY(-playerStats.jumpPower);
+                this.jumpSound.play();
+                this.emitter.start();
+                this.time.delayedCall(300, () => {
+                    this.emitter.stop();
+                });
+            }
+            
+            // Fire fireball
+            if (this.fireButton.isDown && time > this.lastFired) {
+                this.fireFireball(time);
+                this.fireballs++;
+                this.lastFired = time + this.fireballCooldown;
+                
+                // Update challenge progress if needed
+                if (this.dailyChallenge && this.dailyChallenge.type === 'nofireball') {
+                    this.challengeComplete = false;
+                    this.events.emit('challengeUpdate', 1, false);
+                }
+            }
+            
+            // Move enemies toward player
+            this.enemies.getChildren().forEach(enemy => {
+                if (enemy.active && 
+                    enemy.x > this.player.x - 400 && 
+                    enemy.x
