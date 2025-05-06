@@ -27,6 +27,66 @@
     <div id="game-container"></div>
 
     <script>
+        class MainMenu extends Phaser.Scene {
+            constructor() {
+                super('MainMenu');
+            }
+
+            create() {
+                // Set up the table background
+                this.add.rectangle(400, 300, 800, 600, 0x076324).setOrigin(0.5);
+                
+                // Game title
+                this.add.text(400, 150, 'BLACKJACK', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '64px',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                }).setOrigin(0.5);
+                
+                // Rules text
+                const rulesText = [
+                    'How to Play:',
+                    '• Start with $100',
+                    '• Place your bet using the $1, $5, and $25 buttons',
+                    '• Try to get closer to 21 than the dealer without going over',
+                    '• Blackjack pays 3:2',
+                    '• Dealer hits on 16 or less, stands on 17+'
+                ];
+                
+                for (let i = 0; i < rulesText.length; i++) {
+                    this.add.text(400, 250 + (i * 30), rulesText[i], { 
+                        fontFamily: 'Arial', 
+                        fontSize: '20px',
+                        color: '#ffffff'
+                    }).setOrigin(0.5);
+                }
+                
+                // Start game button
+                const startButton = this.add.rectangle(400, 450, 200, 60, 0x169e16).setInteractive();
+                this.add.text(400, 450, 'START GAME', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '28px',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                }).setOrigin(0.5);
+                
+                startButton.on('pointerdown', () => {
+                    this.scene.start('BlackjackGame');
+                });
+                
+                // Add a pulsing effect to the start button
+                this.tweens.add({
+                    targets: startButton,
+                    scaleX: 1.05,
+                    scaleY: 1.05,
+                    duration: 700,
+                    yoyo: true,
+                    repeat: -1
+                });
+            }
+        }
+
         class BlackjackGame extends Phaser.Scene {
             constructor() {
                 super('BlackjackGame');
@@ -59,16 +119,49 @@
                 
                 // Start in betting state
                 this.updateGameState('betting');
+                
+                // Add instructions text
+                this.add.text(400, 120, 'Place your bet and click DEAL to start', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '24px',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                }).setOrigin(0.5);
+                
+                // Add menu button
+                const menuButton = this.add.rectangle(100, 550, 150, 50, 0x1a65ac).setInteractive();
+                this.add.text(100, 550, 'MAIN MENU', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '18px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                menuButton.on('pointerdown', () => {
+                    this.scene.start('MainMenu');
+                });
             }
 
             createUI() {
-                // Game title
-                this.add.text(400, 50, 'BLACKJACK', { 
+                // Game title with card suits
+                const titleText = this.add.text(400, 50, 'BLACKJACK', { 
                     fontFamily: 'Arial', 
                     fontSize: '32px',
                     color: '#ffffff',
                     fontStyle: 'bold'
                 }).setOrigin(0.5);
+                
+                // Add card suits next to the title for decoration
+                const suits = ['♠', '♥', '♦', '♣'];
+                const colors = ['#ffffff', '#ff0000', '#ff0000', '#ffffff'];
+                
+                for (let i = 0; i < suits.length; i++) {
+                    this.add.text(530 + (i * 30), 50, suits[i], { 
+                        fontFamily: 'Arial', 
+                        fontSize: '32px',
+                        color: colors[i],
+                        fontStyle: 'bold'
+                    }).setOrigin(0.5);
+                }
 
                 // Player money display
                 this.moneyText = this.add.text(50, 30, `Money: $${this.playerMoney}`, { 
@@ -103,13 +196,23 @@
                 this.createBetButton(600, 450, '$5', 5);
                 this.createBetButton(650, 450, '$25', 25);
                 
-                // Deal button
+                // Deal button with visual feedback
                 this.dealButton = this.add.rectangle(600, 500, 150, 50, 0x1a65ac).setInteractive();
-                this.add.text(600, 500, 'DEAL', { 
+                this.dealText = this.add.text(600, 500, 'DEAL', { 
                     fontFamily: 'Arial', 
                     fontSize: '20px',
-                    color: '#ffffff' 
+                    color: '#ffffff',
+                    fontStyle: 'bold'
                 }).setOrigin(0.5);
+                
+                // Visual feedback on hover
+                this.dealButton.on('pointerover', () => {
+                    this.dealButton.fillColor = 0x2a75bc;
+                });
+                
+                this.dealButton.on('pointerout', () => {
+                    this.dealButton.fillColor = 0x1a65ac;
+                });
                 
                 this.dealButton.on('pointerdown', () => {
                     if (this.gameState === 'betting' && this.currentBet > 0) {
@@ -187,14 +290,45 @@
                 this.add.text(x, y, text, { 
                     fontFamily: 'Arial', 
                     fontSize: '16px',
-                    color: '#ffffff' 
+                    color: '#ffffff',
+                    fontStyle: 'bold'
                 }).setOrigin(0.5);
+                
+                // Visual feedback on hover
+                button.on('pointerover', () => {
+                    button.fillColor = 0x27ae27;
+                });
+                
+                button.on('pointerout', () => {
+                    button.fillColor = 0x169e16;
+                });
                 
                 button.on('pointerdown', () => {
                     if (this.gameState === 'betting' && this.playerMoney >= amount) {
                         this.currentBet += amount;
                         this.playerMoney -= amount;
                         this.updateMoneyDisplay();
+                        
+                        // Add a coin sound effect (simulated with visual feedback)
+                        button.fillColor = 0xffcc00;
+                        this.time.delayedCall(100, () => {
+                            button.fillColor = 0x169e16;
+                        });
+                        
+                        // Make the bet text pulse to show it changed
+                        this.tweens.add({
+                            targets: this.betText,
+                            scaleX: 1.2,
+                            scaleY: 1.2,
+                            duration: 100,
+                            yoyo: true
+                        });
+                    } else if (this.gameState === 'betting' && this.playerMoney < amount) {
+                        // Show feedback that player doesn't have enough money
+                        button.fillColor = 0xcc0000;
+                        this.time.delayedCall(200, () => {
+                            button.fillColor = 0x169e16;
+                        });
                     }
                 });
 
@@ -530,7 +664,7 @@
             width: 800,
             height: 600,
             parent: 'game-container',
-            scene: [BlackjackGame],
+            scene: [MainMenu, BlackjackGame],
             backgroundColor: '#076324'
         };
 
