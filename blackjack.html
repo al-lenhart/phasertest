@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blackjack Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.55.2/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            width: 800px;
+            height: 600px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+        class BlackjackGame extends Phaser.Scene {
+            constructor() {
+                super('BlackjackGame');
+                this.playerMoney = 100;
+                this.currentBet = 0;
+                this.playerCards = [];
+                this.dealerCards = [];
+                this.playerScore = 0;
+                this.dealerScore = 0;
+                this.deck = [];
+                this.gameState = 'betting'; // betting, playing, result
+                this.suits = ['hearts', 'diamonds', 'clubs', 'spades'];
+                this.values = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+            }
+
+            preload() {
+                // Load fonts if needed
+                this.load.image('card-back', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+            }
+
+            create() {
+                // Set up the table background
+                this.add.rectangle(400, 300, 800, 600, 0x076324).setOrigin(0.5);
+                
+                // Create UI elements
+                this.createUI();
+                
+                // Initialize the deck
+                this.createDeck();
+                
+                // Start in betting state
+                this.updateGameState('betting');
+            }
+
+            createUI() {
+                // Game title
+                this.add.text(400, 50, 'BLACKJACK', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '32px',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                }).setOrigin(0.5);
+
+                // Player money display
+                this.moneyText = this.add.text(50, 30, `Money: $${this.playerMoney}`, { 
+                    fontFamily: 'Arial', 
+                    fontSize: '24px',
+                    color: '#ffffff' 
+                });
+
+                // Current bet display
+                this.betText = this.add.text(50, 70, `Current Bet: $${this.currentBet}`, { 
+                    fontFamily: 'Arial', 
+                    fontSize: '24px',
+                    color: '#ffffff' 
+                });
+
+                // Player score
+                this.playerScoreText = this.add.text(150, 350, 'Player: 0', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '24px',
+                    color: '#ffffff' 
+                });
+
+                // Dealer score
+                this.dealerScoreText = this.add.text(150, 150, 'Dealer: 0', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '24px',
+                    color: '#ffffff' 
+                });
+
+                // Betting buttons
+                this.createBetButton(550, 450, '$1', 1);
+                this.createBetButton(600, 450, '$5', 5);
+                this.createBetButton(650, 450, '$25', 25);
+                
+                // Deal button
+                this.dealButton = this.add.rectangle(600, 500, 150, 50, 0x1a65ac).setInteractive();
+                this.add.text(600, 500, 'DEAL', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '20px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                this.dealButton.on('pointerdown', () => {
+                    if (this.gameState === 'betting' && this.currentBet > 0) {
+                        this.startGame();
+                    }
+                });
+
+                // Hit button
+                this.hitButton = this.add.rectangle(550, 500, 100, 50, 0x1a65ac).setInteractive();
+                this.add.text(550, 500, 'HIT', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '20px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                this.hitButton.on('pointerdown', () => {
+                    if (this.gameState === 'playing') {
+                        this.playerHit();
+                    }
+                });
+
+                // Stand button
+                this.standButton = this.add.rectangle(650, 500, 100, 50, 0x1a65ac).setInteractive();
+                this.add.text(650, 500, 'STAND', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '20px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                this.standButton.on('pointerdown', () => {
+                    if (this.gameState === 'playing') {
+                        this.playerStand();
+                    }
+                });
+
+                // Reset bet button
+                this.resetBetButton = this.add.rectangle(400, 450, 100, 50, 0xcc0000).setInteractive();
+                this.add.text(400, 450, 'RESET BET', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '16px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                this.resetBetButton.on('pointerdown', () => {
+                    if (this.gameState === 'betting') {
+                        this.resetBet();
+                    }
+                });
+
+                // Play again button
+                this.playAgainButton = this.add.rectangle(600, 550, 200, 50, 0x169e16).setInteractive();
+                this.add.text(600, 550, 'PLAY AGAIN', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '20px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                this.playAgainButton.on('pointerdown', () => {
+                    if (this.gameState === 'result') {
+                        this.resetGame();
+                    }
+                });
+
+                // Game message
+                this.messageText = this.add.text(400, 250, '', { 
+                    fontFamily: 'Arial', 
+                    fontSize: '32px',
+                    color: '#ffffff',
+                    fontStyle: 'bold'
+                }).setOrigin(0.5);
+            }
+
+            createBetButton(x, y, text, amount) {
+                const button = this.add.rectangle(x, y, 45, 45, 0x169e16).setInteractive();
+                this.add.text(x, y, text, { 
+                    fontFamily: 'Arial', 
+                    fontSize: '16px',
+                    color: '#ffffff' 
+                }).setOrigin(0.5);
+                
+                button.on('pointerdown', () => {
+                    if (this.gameState === 'betting' && this.playerMoney >= amount) {
+                        this.currentBet += amount;
+                        this.playerMoney -= amount;
+                        this.updateMoneyDisplay();
+                    }
+                });
+
+                return button;
+            }
+
+            createDeck() {
+                this.deck = [];
+                for (let suit of this.suits) {
+                    for (let value of this.values) {
+                        this.deck.push({ suit, value });
+                    }
+                }
+                this.shuffleDeck();
+            }
+
+            shuffleDeck() {
+                for (let i = this.deck.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [this.deck[i], this.deck[j]] = [this.deck[j], this.deck[i]];
+                }
+            }
+
+            startGame() {
+                // Clear previous cards
+                this.playerCards = [];
+                this.dealerCards = [];
+                
+                // Clear card graphics from previous game
+                this.children.each(child => {
+                    if (child.type === 'Image' && child.texture.key.startsWith('card-')) {
+                        child.destroy();
+                    }
+                });
+                
+                // Deal initial cards
+                this.playerCards.push(this.drawCard());
+                this.dealerCards.push(this.drawCard());
+                this.playerCards.push(this.drawCard());
+                this.dealerCards.push(this.drawCard(true)); // Dealer's second card is hidden
+                
+                // Display cards
+                this.renderCards();
+                
+                // Calculate scores
+                this.calculateScores();
+                
+                // Check for blackjack
+                if (this.playerScore === 21) {
+                    // Check if dealer also has blackjack
+                    if (this.calculateScore(this.dealerCards, false) === 21) {
+                        this.revealDealerCard();
+                        this.endRound('push');
+                    } else {
+                        this.revealDealerCard();
+                        this.endRound('blackjack');
+                    }
+                } else {
+                    // Continue to playing state
+                    this.updateGameState('playing');
+                }
+            }
+
+            drawCard(faceDown = false) {
+                if (this.deck.length === 0) {
+                    this.createDeck(); // Reshuffle if deck is empty
+                }
+                const card = this.deck.pop();
+                card.faceDown = faceDown;
+                return card;
+            }
+
+            renderCards() {
+                // Render player cards
+                this.playerCards.forEach((card, index) => {
+                    const x = 300 + index * 60;
+                    const y = 400;
+                    this.renderCard(card, x, y);
+                });
+                
+                // Render dealer cards
+                this.dealerCards.forEach((card, index) => {
+                    const x = 300 + index * 60;
+                    const y = 200;
+                    this.renderCard(card, x, y);
+                });
+            }
+
+            renderCard(card, x, y) {
+                const cardWidth = 80;
+                const cardHeight = 120;
+                
+                let cardGraphic;
+                if (card.faceDown) {
+                    // Create face down card
+                    cardGraphic = this.add.rectangle(x, y, cardWidth, cardHeight, 0x0000cc).setOrigin(0.5);
+                    this.add.rectangle(x, y, cardWidth - 10, cardHeight - 10, 0x000099).setOrigin(0.5);
+                    this.add.rectangle(x, y, cardWidth - 20, cardHeight - 20, 0x3333cc).setOrigin(0.5);
+                } else {
+                    // Create face up card
+                    cardGraphic = this.add.rectangle(x, y, cardWidth, cardHeight, 0xffffff).setOrigin(0.5);
+                    
+                    // Card value
+                    const textColor = (card.suit === 'hearts' || card.suit === 'diamonds') ? '#ff0000' : '#000000';
+                    this.add.text(x - 30, y - 50, card.value, { 
+                        fontFamily: 'Arial', 
+                        fontSize: '24px',
+                        color: textColor,
+                        fontStyle: 'bold'
+                    }).setOrigin(0);
+                    
+                    // Card suit
+                    let suitSymbol;
+                    switch (card.suit) {
+                        case 'hearts': suitSymbol = '♥'; break;
+                        case 'diamonds': suitSymbol = '♦'; break;
+                        case 'clubs': suitSymbol = '♣'; break;
+                        case 'spades': suitSymbol = '♠'; break;
+                    }
+                    
+                    this.add.text(x, y, suitSymbol, { 
+                        fontFamily: 'Arial', 
+                        fontSize: '40px',
+                        color: textColor
+                    }).setOrigin(0.5);
+                }
+                
+                return cardGraphic;
+            }
+
+            calculateScores() {
+                this.playerScore = this.calculateScore(this.playerCards);
+                this.dealerScore = this.calculateScore(this.dealerCards);
+                
+                // Update score displays
+                this.playerScoreText.setText(`Player: ${this.playerScore}`);
+                
+                if (this.dealerCards.some(card => card.faceDown)) {
+                    // If dealer has face down cards, only show the score of face up cards
+                    const visibleScore = this.calculateScore(this.dealerCards.filter(card => !card.faceDown));
+                    this.dealerScoreText.setText(`Dealer: ${visibleScore}`);
+                } else {
+                    this.dealerScoreText.setText(`Dealer: ${this.dealerScore}`);
+                }
+            }
+
+            calculateScore(cards, countHidden = true) {
+                let score = 0;
+                let aces = 0;
+                
+                for (let card of cards) {
+                    if (card.faceDown && !countHidden) continue;
+                    
+                    const value = card.value;
+                    if (value === 'A') {
+                        aces++;
+                        score += 11;
+                    } else if (value === 'K' || value === 'Q' || value === 'J') {
+                        score += 10;
+                    } else {
+                        score += parseInt(value);
+                    }
+                }
+                
+                // Adjust for aces if needed
+                while (score > 21 && aces > 0) {
+                    score -= 10;
+                    aces--;
+                }
+                
+                return score;
+            }
+
+            playerHit() {
+                this.playerCards.push(this.drawCard());
+                this.renderCards();
+                this.calculateScores();
+                
+                // Check if player busts
+                if (this.playerScore > 21) {
+                    this.revealDealerCard();
+                    this.endRound('player-bust');
+                }
+            }
+
+            playerStand() {
+                this.revealDealerCard();
+                this.dealerPlay();
+            }
+
+            revealDealerCard() {
+                // Reveal all dealer's face down cards
+                this.dealerCards.forEach(card => {
+                    card.faceDown = false;
+                });
+                
+                // Re-render cards
+                this.renderCards();
+                this.calculateScores();
+            }
+
+            dealerPlay() {
+                // Dealer hits on 16 or less, stands on 17 or more
+                while (this.dealerScore < 17) {
+                    this.dealerCards.push(this.drawCard());
+                    this.renderCards();
+                    this.calculateScores();
+                }
+                
+                // Determine winner
+                if (this.dealerScore > 21) {
+                    this.endRound('dealer-bust');
+                } else if (this.dealerScore > this.playerScore) {
+                    this.endRound('dealer-win');
+                } else if (this.dealerScore < this.playerScore) {
+                    this.endRound('player-win');
+                } else {
+                    this.endRound('push');
+                }
+            }
+
+            endRound(result) {
+                let message = '';
+                
+                switch (result) {
+                    case 'blackjack':
+                        message = 'BLACKJACK! You win 3:2';
+                        this.playerMoney += this.currentBet * 2.5; // Blackjack pays 3:2
+                        break;
+                    case 'player-win':
+                        message = 'You win!';
+                        this.playerMoney += this.currentBet * 2; // Return bet + win same amount
+                        break;
+                    case 'dealer-win':
+                        message = 'Dealer wins!';
+                        // Player already lost their bet
+                        break;
+                    case 'player-bust':
+                        message = 'Bust! You lose.';
+                        // Player already lost their bet
+                        break;
+                    case 'dealer-bust':
+                        message = 'Dealer busts! You win!';
+                        this.playerMoney += this.currentBet * 2; // Return bet + win same amount
+                        break;
+                    case 'push':
+                        message = 'Push! Bet returned.';
+                        this.playerMoney += this.currentBet; // Return bet
+                        break;
+                }
+                
+                this.messageText.setText(message);
+                this.updateMoneyDisplay();
+                this.updateGameState('result');
+            }
+
+            resetBet() {
+                this.playerMoney += this.currentBet;
+                this.currentBet = 0;
+                this.updateMoneyDisplay();
+            }
+
+            resetGame() {
+                this.messageText.setText('');
+                this.currentBet = 0;
+                this.updateMoneyDisplay();
+                
+                // Check if player is out of money
+                if (this.playerMoney <= 0) {
+                    this.messageText.setText('Game Over! No money left.');
+                    // Add option to restart with fresh money
+                    const restartButton = this.add.rectangle(400, 300, 200, 50, 0x169e16).setInteractive();
+                    this.add.text(400, 300, 'RESTART GAME', { 
+                        fontFamily: 'Arial', 
+                        fontSize: '20px',
+                        color: '#ffffff' 
+                    }).setOrigin(0.5);
+                    
+                    restartButton.on('pointerdown', () => {
+                        this.playerMoney = 100;
+                        this.updateMoneyDisplay();
+                        restartButton.destroy();
+                        this.children.each(child => {
+                            if (child.type === 'Text' && child.text === 'RESTART GAME') {
+                                child.destroy();
+                            }
+                        });
+                        this.messageText.setText('');
+                        this.updateGameState('betting');
+                    });
+                } else {
+                    this.updateGameState('betting');
+                }
+            }
+
+            updateMoneyDisplay() {
+                this.moneyText.setText(`Money: $${this.playerMoney}`);
+                this.betText.setText(`Current Bet: $${this.currentBet}`);
+            }
+
+            updateGameState(state) {
+                this.gameState = state;
+                
+                // Hide/show appropriate buttons based on game state
+                switch (state) {
+                    case 'betting':
+                        this.hitButton.setVisible(false);
+                        this.standButton.setVisible(false);
+                        this.dealButton.setVisible(true);
+                        this.resetBetButton.setVisible(true);
+                        this.playAgainButton.setVisible(false);
+                        break;
+                    case 'playing':
+                        this.hitButton.setVisible(true);
+                        this.standButton.setVisible(true);
+                        this.dealButton.setVisible(false);
+                        this.resetBetButton.setVisible(false);
+                        this.playAgainButton.setVisible(false);
+                        break;
+                    case 'result':
+                        this.hitButton.setVisible(false);
+                        this.standButton.setVisible(false);
+                        this.dealButton.setVisible(false);
+                        this.resetBetButton.setVisible(false);
+                        this.playAgainButton.setVisible(true);
+                        break;
+                }
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            scene: [BlackjackGame],
+            backgroundColor: '#076324'
+        };
+
+        const game = new Phaser.Game(config);
+    </script>
+</body>
+</html>
